@@ -1,0 +1,166 @@
+import sys
+import time
+import threading
+from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QLineEdit, QPushButton, QTextEdit, QVBoxLayout
+from PyQt6.QtCore import QSettings
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
+
+LICENSE_URL = "https://menulicense.macmarketing.us/mac-login.php"
+
+class MenuPolicyApp(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.settings = QSettings("MyCompany", "MenuPolicyApp")
+        self.initUI()
+        self.load_settings()
+
+    def initUI(self):
+        self.setWindowTitle("Menu Policy")
+        self.setGeometry(100, 100, 500, 500)
+
+        layout = QVBoxLayout()
+
+        self.license_user_label = QLabel("License User:")
+        layout.addWidget(self.license_user_label)
+        self.license_user_input = QLineEdit(self)
+        layout.addWidget(self.license_user_input)
+
+        self.license_pass_label = QLabel("License Password:")
+        layout.addWidget(self.license_pass_label)
+        self.license_pass_input = QLineEdit(self)
+        self.license_pass_input.setEchoMode(QLineEdit.EchoMode.Password)
+        layout.addWidget(self.license_pass_input)
+
+        self.website_user_label = QLabel("Website User:")
+        layout.addWidget(self.website_user_label)
+        self.website_user_input = QLineEdit(self)
+        layout.addWidget(self.website_user_input)
+
+        self.website_pass_label = QLabel("Website Password:")
+        layout.addWidget(self.website_pass_label)
+        self.website_pass_input = QLineEdit(self)
+        self.website_pass_input.setEchoMode(QLineEdit.EchoMode.Password)
+        layout.addWidget(self.website_pass_input)
+
+        self.label = QLabel("Nhập Domain:")
+        layout.addWidget(self.label)
+        self.domain_input = QLineEdit(self)
+        layout.addWidget(self.domain_input)
+
+        self.save_button = QPushButton("💾 Lưu thông tin", self)
+        self.save_button.clicked.connect(self.save_settings)
+        layout.addWidget(self.save_button)
+
+        self.run_button = QPushButton("🚀 Chạy", self)
+        self.run_button.clicked.connect(self.run_script)
+        layout.addWidget(self.run_button)
+
+        self.log_output = QTextEdit(self)
+        self.log_output.setReadOnly(True)
+        layout.addWidget(self.log_output)
+
+        self.setLayout(layout)
+
+    def log(self, message):
+        self.log_output.append(message)
+        QApplication.processEvents()
+
+    def save_settings(self):
+        self.settings.setValue("license_user", self.license_user_input.text())
+        self.settings.setValue("license_pass", self.license_pass_input.text())
+        self.settings.setValue("website_user", self.website_user_input.text())
+        self.settings.setValue("website_pass", self.website_pass_input.text())
+        self.log("✅ Đã lưu thông tin!")
+
+    def load_settings(self):
+        self.license_user_input.setText(self.settings.value("license_user", ""))
+        self.license_pass_input.setText(self.settings.value("license_pass", ""))
+        self.website_user_input.setText(self.settings.value("website_user", ""))
+        self.website_pass_input.setText(self.settings.value("website_pass", ""))
+
+    def run_script(self):
+        domain = self.domain_input.text().strip()
+        license_user = self.license_user_input.text().strip()
+        license_pass = self.license_pass_input.text().strip()
+        website_user = self.website_user_input.text().strip()
+        website_pass = self.website_pass_input.text().strip()
+
+        if not domain or not license_user or not license_pass or not website_user or not website_pass:
+            self.log("❌ Vui lòng nhập đầy đủ thông tin!")
+            return
+
+        self.log("🔄 Đang khởi chạy...")
+        threading.Thread(target=self.automate, args=(domain, license_user, license_pass, website_user, website_pass), daemon=True).start()
+
+    def automate(self, domain, license_user, license_pass, website_user, website_pass):
+        options = Options()
+        options.add_argument("--incognito")
+        options.add_argument("--start-maximized")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=options)
+        wait = WebDriverWait(driver, 15)
+
+        try:
+            self.log("🔄 Đang truy cập trang đăng nhập License...")
+            driver.get(LICENSE_URL)
+            wait.until(EC.presence_of_element_located((By.NAME, "user-name"))).send_keys(license_user)
+            wait.until(EC.presence_of_element_located((By.NAME, "password"))).send_keys(license_pass)
+            wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@type='submit']"))).click()
+            self.log("✅ Đăng nhập thành công!")
+
+            self.log("🔍 Đang tìm domain tương ứng...")
+            try:
+                domain_row = wait.until(EC.presence_of_element_located((By.XPATH, f"//tr[td/a[contains(@href, '{domain}')]]")))
+                key_element = domain_row.find_element(By.XPATH, ".//td[@class='keyactivate']")
+                key_value = key_element.text.strip()
+                self.log(f"✅ Tìm thấy domain: {domain}")
+                self.log(f"🔑 Key Activate: {key_value}")
+            except:
+                self.log(f"❌ Không tìm thấy domain: {domain}.")
+                return
+
+            self.log("🔄 Đang kích hoạt Key trên website...")
+            driver.get(f"{domain}/wp-admin/admin.php?page=mac-menu")
+            time.sleep(5)
+            key_input = wait.until(EC.presence_of_element_located((By.ID, "kvp-key-input")))
+            key_input.clear()
+            key_input.send_keys(key_value)
+            time.sleep(2)
+            validate_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[text()='Validate']")))
+            validate_button.click()
+            time.sleep(5)
+            self.log("✅ Key đã được kích hoạt!")
+
+            self.log("🔄 Đang kiểm tra cập nhật plugin...")
+            driver.get(f"{domain}/wp-admin/plugins.php")
+            time.sleep(5)
+            try:
+                update_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(@href, 'update_mac=mac-menu')]")))
+                update_button.click()
+                time.sleep(5)
+                self.log("✅ Đang cập nhật plugin...")
+            except:
+                self.log("✅ Plugin đã được cập nhật trước đó!")
+
+            self.log("🔄 Đang cập nhật Privacy Policy...")
+            driver.get(f"{domain}/wp-admin/options-general.php?page=mac-privacy-policy-settings")
+            time.sleep(5)
+            update_privacy_button = wait.until(EC.element_to_be_clickable((By.NAME, "submit-add-shortcode")))
+            update_privacy_button.click()
+            time.sleep(5)
+            self.log("✅ Đã cập nhật Privacy Policy!")
+
+            self.log("✅ Quá trình hoàn tất!")
+        except Exception as e:
+            self.log(f"❌ Lỗi xảy ra: {e}")
+  
